@@ -47,7 +47,7 @@ services:
     volumes:
       - ./api-consumer:/app
     environment:
-      - TMDB_API_KEY=METS_TA_CLE_API_ICI  # Tu pourras récupérer cette variable dans ton code Python
+      - TMDB_API_KEY=fdee8faa6560e0c0388c2e30ea9f93b5  # Tu pourras récupérer cette variable dans ton code Python
     # Pas de dépendance, il est autonome
 
   # ----------------------------------------------------
