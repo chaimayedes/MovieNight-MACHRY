@@ -11,7 +11,7 @@ paths:
   # ----------------------------------------------------
   # ENDPOINT 1 : Recommandation de films
   # ----------------------------------------------------
-  /recommend:
+  /api/v1/recommendation:
     get:
       summary: Obtenir un top 3 de films recommandés
       description: Recommande 3 films triés par pertinence selon l'humeur de l'utilisateur et la composition du groupe.
@@ -47,7 +47,7 @@ paths:
   # ----------------------------------------------------
   # ENDPOINT 2 : Détails d'un film
   # ----------------------------------------------------
-  /movie/{id}:
+  /api/v1/movies/{id}:
     get:
       summary: Récupérer les détails complets d'un film
       description: Renvoie les informations détaillées d'un film spécifique via son ID (issu de TMDB).
@@ -71,7 +71,7 @@ paths:
   # ----------------------------------------------------
   # ENDPOINT 3 : Noter un film
   # ----------------------------------------------------
-  /movie/{id}/rate:
+  /api/v1/movies/{id}/rate:
     post:
       summary: Noter un film vu
       description: Permet à un utilisateur d'attribuer une note à un film. Cette note sera enregistrée dans le Datastore.
@@ -119,6 +119,116 @@ paths:
                     example: "Rating registered for movie 550"
         '400':
           description: Données de notation invalides
+
+    # ----------------------------------------------------
+  # ENDPOINT 4 : Recherche de films
+  # ----------------------------------------------------
+  /api/v1/search:
+    get:
+      summary: Recherche de films
+      description: Recherche des films par mot-clé et optionnellement par genre.
+      parameters:
+        - name: query
+          in: query
+          required: true
+          description: Le terme de recherche
+          schema:
+            type: string
+        - name: genre
+          in: query
+          required: false
+          description: Filtrer par genre
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Liste des films correspondants
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MovieMinimal'
+
+  # ----------------------------------------------------
+  # ENDPOINT 5 : Watchlist (Favoris à voir)
+  # ----------------------------------------------------
+  /api/v1/user/{user_id}/watchlist:
+    get:
+      summary: Récupérer la watchlist
+      description: Liste des films que l'utilisateur souhaite voir plus tard.
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Liste de la watchlist
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MovieMinimal'
+    post:
+      summary: Ajouter un film à la watchlist
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [movie_id]
+              properties:
+                movie_id: { type: integer }
+      responses:
+        '201':
+          description: Film ajouté à la watchlist
+
+  # ----------------------------------------------------
+  # ENDPOINT 6 : Catalogue général avec pagination
+  # ----------------------------------------------------
+  /api/v1/movies:
+    get:
+      summary: Récupérer le catalogue général
+      description: "Liste tous les films disponibles avec une pagination pour ne pas surcharger la Gateway."
+      parameters:
+        - name: page
+          in: query
+          required: false
+          description: "Numéro de la page de résultats"
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          required: false
+          description: "Nombre de films par page"
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: "Catalogue récupéré avec succès"
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_results: { type: integer }
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MovieMinimal'
+          
 
 # ----------------------------------------------------
 # COMPONENTS : Définition des structures de données
