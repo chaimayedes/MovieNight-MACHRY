@@ -1,0 +1,175 @@
+openapi: 3.0.3
+info:
+  title: Movie Night API — Public Gateway
+  description: API publique pour l'application de recommandation de films "Movie Night" basée sur l'humeur et le groupe.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8000
+    description: Serveur de développement local (Public API)
+
+paths:
+  # ----------------------------------------------------
+  # ENDPOINT 1 : Recommandation de films
+  # ----------------------------------------------------
+  /recommend:
+    get:
+      summary: Obtenir un top 3 de films recommandés
+      description: Recommande 3 films triés par pertinence selon l'humeur de l'utilisateur et la composition du groupe.
+      parameters:
+        - name: mood
+          in: query
+          required: true
+          description: L'humeur actuelle pour le film
+          schema:
+            type: string
+            enum: [chill, scary, laugh, cry, action]
+        - name: group
+          in: query
+          required: true
+          description: Avec qui regardez-vous le film ?
+          schema:
+            type: string
+            enum: [solo, couple, friends, family]
+      responses:
+        '200':
+          description: Top 3 des films trouvé avec succès
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MovieMinimal'
+                minItems: 3
+                maxItems: 3
+        '400':
+          description: Paramètres manquants ou invalides
+
+  # ----------------------------------------------------
+  # ENDPOINT 2 : Détails d'un film
+  # ----------------------------------------------------
+  /movie/{id}:
+    get:
+      summary: Récupérer les détails complets d'un film
+      description: Renvoie les informations détaillées d'un film spécifique via son ID (issu de TMDB).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: L'identifiant unique du film (TMDB ID)
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Détails du film récupérés
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MovieDetailed'
+        '404':
+          description: Film introuvable (ID inexistant)
+
+  # ----------------------------------------------------
+  # ENDPOINT 3 : Noter un film
+  # ----------------------------------------------------
+  /movie/{id}/rate:
+    post:
+      summary: Noter un film vu
+      description: Permet à un utilisateur d'attribuer une note à un film. Cette note sera enregistrée dans le Datastore.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: L'identifiant du film à noter
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user_id
+                - rating
+              properties:
+                user_id:
+                  type: integer
+                  description: L'ID de l'utilisateur qui note
+                  example: 42
+                rating:
+                  type: number
+                  format: float
+                  description: La note attribuée (sur 5 étoiles par exemple)
+                  minimum: 0
+                  maximum: 5
+                  example: 4.5
+      responses:
+        '201':
+          description: Note enregistrée avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  message:
+                    type: string
+                    example: "Rating registered for movie 550"
+        '400':
+          description: Données de notation invalides
+
+# ----------------------------------------------------
+# COMPONENTS : Définition des structures de données
+# ----------------------------------------------------
+components:
+  schemas:
+    
+    # Modèle simplifié pour les listes (Top 3)
+    MovieMinimal:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 550
+        title:
+          type: string
+          example: "Fight Club"
+        poster_path:
+          type: string
+          example: "/pB8BM7pdSp6B6Ih7QZ49Yw4v6as.jpg"
+        release_date:
+          type: string
+          example: "1999-10-15"
+
+    # Modèle complet pour la page de détail
+    MovieDetailed:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 550
+        title:
+          type: string
+          example: "Fight Club"
+        overview:
+          type: string
+          example: "A ticking-time-bomb insomniac and a slippery soap salesman channel primal male aggression into a shocking new form of therapy..."
+        duration:
+          type: integer
+          description: Durée en minutes
+          example: 139
+        poster_path:
+          type: string
+          example: "/pB8BM7pdSp6B6Ih7QZ49Yw4v6as.jpg"
+        genres:
+          type: array
+          items:
+            type: string
+          example: ["Drama", "Thriller"]
+        casting:
+          type: array
+          items:
+            type: string
+          example: ["Brad Pitt", "Edward Norton", "Helena Bonham Carter"]
