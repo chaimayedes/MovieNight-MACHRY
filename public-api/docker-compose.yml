@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+
+  # ----------------------------------------------------
+  # SERVICE 1 : PUBLIC API (La porte d'entrée publique)
+  # ----------------------------------------------------
+  public-api:
+    build:
+      context: ./public-api
+    ports:
+      - "8000:8000" # Seul ce service est accessible depuis ton PC (ex: localhost:8000/recommend)
+    volumes:
+      - ./public-api:/app
+    environment:
+      - BUSINESS_LOGIC_URL=http://business-logic:8000
+      - DATASTORE_URL=http://datastore:8000
+    depends_on:
+      - business-logic
+      - datastore
+
+  # ----------------------------------------------------
+  # SERVICE 2 : BUSINESS LOGIC (Le cerveau des calculs)
+  # ----------------------------------------------------
+  business-logic:
+    build:
+      context: ./business-logic
+    ports:
+      - "8001:8000" # Optionnel : accessible sur localhost:8001 pour tester sa doc Swagger
+    volumes:
+      - ./business-logic:/app
+    environment:
+      - API_CONSUMER_URL=http://api-consumer:8000
+      - DATASTORE_URL=http://datastore:8000
+    depends_on:
+      - api-consumer
+      - datastore
+
+  # ----------------------------------------------------
+  # SERVICE 3 : API CONSUMER (Le lien avec TheMovieDB)
+  # ----------------------------------------------------
+  api-consumer:
+    build:
+      context: ./api-consumer
+    ports:
+      - "8002:8000" # Optionnel : accessible sur localhost:8002
+    volumes:
+      - ./api-consumer:/app
+    environment:
+      - TMDB_API_KEY=METS_TA_CLE_API_ICI  # Tu pourras récupérer cette variable dans ton code Python
+    # Pas de dépendance, il est autonome
+
+  # ----------------------------------------------------
+  # SERVICE 4 : DATASTORE (Historique, Notes et Cache)
+  # ----------------------------------------------------
+  datastore:
+    build:
+      context: ./datastore
+    ports:
+      - "8003:8000" # Optionnel : accessible sur localhost:8003
+    volumes:
+      - ./datastore:/app
+      - movie_db_data:/data # Volume pour ne pas perdre la base SQLite au redémarrage
+    environment:
+      - DATABASE_URL=sqlite:////data/movie_night.db
+
+# Création du volume persistant pour SQLite
+volumes:
+  movie_db_data:
