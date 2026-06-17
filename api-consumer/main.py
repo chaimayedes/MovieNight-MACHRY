@@ -1,13 +1,16 @@
 import asyncio
+import json
 import os
 import grpc
 from grpc import aio
 import httpx
+import redis.asyncio as aioredis
 import api_consumer_pb2
 import api_consumer_pb2_grpc
 
 TMDB_API_KEY  = os.getenv("TMDB_API_KEY")
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
+REDIS_URL     = os.getenv("REDIS_URL", "redis://redis:6379")
 
 GENRE_MAP = {
     "chill":  28,
@@ -17,6 +20,8 @@ GENRE_MAP = {
     "action": 28,
 }
 
+redis_client: aioredis.Redis = None
+
 
 class ApiConsumerServicer(api_consumer_pb2_grpc.ApiConsumerServiceServicer):
 
@@ -24,6 +29,13 @@ class ApiConsumerServicer(api_consumer_pb2_grpc.ApiConsumerServiceServicer):
         genre_id = GENRE_MAP.get(request.mood.lower())
         if not genre_id:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"Humeur '{request.mood}' non supportée.")
+
+        cache_key = f"genre:{request.mood.lower()}"
+        cached = await redis_client.get(cache_key)
+        if cached:
+            return api_consumer_pb2.MovieList(movies=[
+                api_consumer_pb2.Movie(**m) for m in json.loads(cached)
+            ])
 
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(f"{TMDB_BASE_URL}/discover/movie", params={
@@ -36,21 +48,38 @@ class ApiConsumerServicer(api_consumer_pb2_grpc.ApiConsumerServiceServicer):
         if resp.status_code != 200:
             await context.abort(grpc.StatusCode.INTERNAL, "Erreur lors de la communication avec TMDB")
 
-        return api_consumer_pb2.MovieList(movies=[
-            api_consumer_pb2.Movie(
-                id=item["id"],
-                title=item["title"],
-                poster_path=item.get("poster_path") or "",
-                release_date=item.get("release_date") or "",
-            )
+        movies = [
+            {
+                "id": item["id"],
+                "title": item["title"],
+                "poster_path": item.get("poster_path") or "",
+                "release_date": item.get("release_date") or "",
+            }
             for item in resp.json().get("results", [])
+        ]
+        await redis_client.setex(cache_key, 1800, json.dumps(movies))  # 30 min
+
+        return api_consumer_pb2.MovieList(movies=[
+            api_consumer_pb2.Movie(**m) for m in movies
         ])
 
     async def FetchCatalog(self, request, context):
+        page  = request.page or 1
+        limit = request.limit or 20
+
+        cache_key = f"catalog:{page}:{limit}"
+        cached = await redis_client.get(cache_key)
+        if cached:
+            data = json.loads(cached)
+            return api_consumer_pb2.CatalogResponse(
+                total_results=data["total_results"],
+                movies=[api_consumer_pb2.Movie(**m) for m in data["movies"]],
+            )
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(f"{TMDB_BASE_URL}/movie/popular", params={
                 "api_key":  TMDB_API_KEY,
-                "page":     request.page or 1,
+                "page":     page,
                 "language": "fr-FR",
             })
 
@@ -58,21 +87,29 @@ class ApiConsumerServicer(api_consumer_pb2_grpc.ApiConsumerServiceServicer):
             await context.abort(grpc.StatusCode.INTERNAL, "Impossible de joindre le catalogue distant")
 
         json_data = resp.json()
-        results   = json_data.get("results", [])[: request.limit or 20]
+        movies = [
+            {
+                "id": item["id"],
+                "title": item["title"],
+                "poster_path": item.get("poster_path") or "",
+                "release_date": item.get("release_date") or "",
+            }
+            for item in json_data.get("results", [])[:limit]
+        ]
+        payload = {"total_results": json_data.get("total_results", 0), "movies": movies}
+        await redis_client.setex(cache_key, 600, json.dumps(payload))  # 10 min
+
         return api_consumer_pb2.CatalogResponse(
-            total_results=json_data.get("total_results", 0),
-            movies=[
-                api_consumer_pb2.Movie(
-                    id=item["id"],
-                    title=item["title"],
-                    poster_path=item.get("poster_path") or "",
-                    release_date=item.get("release_date") or "",
-                )
-                for item in results
-            ],
+            total_results=payload["total_results"],
+            movies=[api_consumer_pb2.Movie(**m) for m in movies],
         )
 
     async def FetchMovie(self, request, context):
+        cache_key = f"movie:{request.movie_id}"
+        cached = await redis_client.get(cache_key)
+        if cached:
+            return api_consumer_pb2.MovieDetailed(**json.loads(cached))
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(
                 f"{TMDB_BASE_URL}/movie/{request.movie_id}",
@@ -90,18 +127,28 @@ class ApiConsumerServicer(api_consumer_pb2_grpc.ApiConsumerServiceServicer):
 
         data      = resp.json()
         cast_list = data.get("credits", {}).get("cast", [])
-        return api_consumer_pb2.MovieDetailed(
-            id=data["id"],
-            title=data["title"],
-            overview=data.get("overview") or "",
-            duration=data.get("runtime") or 0,
-            poster_path=data.get("poster_path") or "",
-            release_date=data.get("release_date") or "",
-            genres=[g["name"] for g in data.get("genres", [])],
-            casting=[actor["name"] for actor in cast_list[:5]],
-        )
+        movie = {
+            "id":           data["id"],
+            "title":        data["title"],
+            "overview":     data.get("overview") or "",
+            "duration":     data.get("runtime") or 0,
+            "poster_path":  data.get("poster_path") or "",
+            "release_date": data.get("release_date") or "",
+            "genres":       [g["name"] for g in data.get("genres", [])],
+            "casting":      [actor["name"] for actor in cast_list[:5]],
+        }
+        await redis_client.setex(cache_key, 3600, json.dumps(movie))  # 1h
+
+        return api_consumer_pb2.MovieDetailed(**movie)
 
     async def SearchMovies(self, request, context):
+        cache_key = f"search:{request.query.lower().strip()}"
+        cached = await redis_client.get(cache_key)
+        if cached:
+            return api_consumer_pb2.MovieList(movies=[
+                api_consumer_pb2.Movie(**m) for m in json.loads(cached)
+            ])
+
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(f"{TMDB_BASE_URL}/search/movie", params={
                 "api_key":  TMDB_API_KEY,
@@ -112,18 +159,26 @@ class ApiConsumerServicer(api_consumer_pb2_grpc.ApiConsumerServiceServicer):
         if resp.status_code != 200:
             await context.abort(grpc.StatusCode.INTERNAL, "Erreur lors de la recherche")
 
-        return api_consumer_pb2.MovieList(movies=[
-            api_consumer_pb2.Movie(
-                id=item["id"],
-                title=item["title"],
-                poster_path=item.get("poster_path") or "",
-                release_date=item.get("release_date") or "",
-            )
+        movies = [
+            {
+                "id": item["id"],
+                "title": item["title"],
+                "poster_path": item.get("poster_path") or "",
+                "release_date": item.get("release_date") or "",
+            }
             for item in resp.json().get("results", [])
+        ]
+        await redis_client.setex(cache_key, 300, json.dumps(movies))  # 5 min
+
+        return api_consumer_pb2.MovieList(movies=[
+            api_consumer_pb2.Movie(**m) for m in movies
         ])
 
 
 async def serve():
+    global redis_client
+    redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
+
     server = aio.server()
     api_consumer_pb2_grpc.add_ApiConsumerServiceServicer_to_server(ApiConsumerServicer(), server)
     server.add_insecure_port("[::]:50051")

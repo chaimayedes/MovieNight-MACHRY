@@ -5,7 +5,7 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-RUN pip install --no-cache-dir grpcio grpcio-tools httpx
+RUN pip install --no-cache-dir grpcio grpcio-tools httpx redis
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

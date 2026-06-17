@@ -49,6 +49,9 @@ services:
       - ../proto:/proto
     environment:
       - TMDB_API_KEY=fdee8faa6560e0c0388c2e30ea9f93b5
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
 
   # ----------------------------------------------------
   # DATASTORE — SQLite via serveur gRPC
@@ -64,6 +67,14 @@ services:
       - movie_db_data:/data
     environment:
       - DATABASE_URL=sqlite:////data/movie_night.db
+
+  # ----------------------------------------------------
+  # REDIS — cache partagé
+  # ----------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
 
 volumes:
   movie_db_data:
