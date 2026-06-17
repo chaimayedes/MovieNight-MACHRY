@@ -3,67 +3,67 @@ version: '3.8'
 services:
 
   # ----------------------------------------------------
-  # SERVICE 1 : PUBLIC API (La porte d'entrée publique)
+  # PUBLIC API — seul service exposé en HTTP (port 8000)
   # ----------------------------------------------------
   public-api:
     build:
-      context: ./public-api
+      context: .
     ports:
-      - "8000:8000" # Seul ce service est accessible depuis ton PC (ex: localhost:8000/recommend)
+      - "8000:8000"
     volumes:
-      - ./public-api:/app
+      - .:/app
+      - ../proto:/proto
     environment:
-      - BUSINESS_LOGIC_URL=http://business-logic:8000
-      - DATASTORE_URL=http://datastore:8000
+      - BUSINESS_LOGIC_HOST=business-logic:50051
     depends_on:
       - business-logic
-      - datastore
 
   # ----------------------------------------------------
-  # SERVICE 2 : BUSINESS LOGIC (Le cerveau des calculs)
+  # BUSINESS LOGIC — serveur gRPC interne
   # ----------------------------------------------------
   business-logic:
     build:
-      context: ./business-logic
+      context: ../business-logic
     ports:
-      - "8001:8000" # Optionnel : accessible sur localhost:8001 pour tester sa doc Swagger
+      - "8001:50051"   # optionnel : debug depuis localhost:8001
     volumes:
-      - ./business-logic:/app
+      - ../business-logic:/app
+      - ../proto:/proto
     environment:
-      - API_CONSUMER_URL=http://api-consumer:8000
-      - DATASTORE_URL=http://datastore:8000
+      - API_CONSUMER_HOST=api-consumer:50051
+      - DATASTORE_HOST=datastore:50051
     depends_on:
       - api-consumer
       - datastore
 
   # ----------------------------------------------------
-  # SERVICE 3 : API CONSUMER (Le lien avec TheMovieDB)
+  # API CONSUMER — pont vers TheMovieDB, serveur gRPC
   # ----------------------------------------------------
   api-consumer:
     build:
-      context: ./api-consumer
+      context: ../api-consumer
     ports:
-      - "8002:8000" # Optionnel : accessible sur localhost:8002
+      - "8002:50051"   # optionnel : debug depuis localhost:8002
     volumes:
-      - ./api-consumer:/app
+      - ../api-consumer:/app
+      - ../proto:/proto
     environment:
-      - TMDB_API_KEY=fdee8faa6560e0c0388c2e30ea9f93b5  # Tu pourras récupérer cette variable dans ton code Python
-    # Pas de dépendance, il est autonome
+      - TMDB_API_KEY=fdee8faa6560e0c0388c2e30ea9f93b5
 
   # ----------------------------------------------------
-  # SERVICE 4 : DATASTORE (Historique, Notes et Cache)
+  # DATASTORE — SQLite via serveur gRPC
   # ----------------------------------------------------
   datastore:
     build:
-      context: ./datastore
+      context: ../datastore
     ports:
-      - "8003:8000" # Optionnel : accessible sur localhost:8003
+      - "8003:50051"   # optionnel : debug depuis localhost:8003
     volumes:
-      - ./datastore:/app
-      - movie_db_data:/data # Volume pour ne pas perdre la base SQLite au redémarrage
+      - ../datastore:/app
+      - ../proto:/proto
+      - movie_db_data:/data
     environment:
       - DATABASE_URL=sqlite:////data/movie_night.db
 
-# Création du volume persistant pour SQLite
 volumes:
   movie_db_data:

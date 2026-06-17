@@ -1,165 +1,136 @@
+import asyncio
 import os
-from typing import List, Optional
-from fastapi import FastAPI, HTTPException, Query
+import grpc
+from grpc import aio
 import httpx
-from pydantic import BaseModel
+import api_consumer_pb2
+import api_consumer_pb2_grpc
 
-app = FastAPI(title="Movie Night — API Consumer Service")
-
-# Récupération de la clé TMDB depuis les variables d'environnement Docker
-TMDB_API_KEY = os.getenv("TMDB_API_KEY")
+TMDB_API_KEY  = os.getenv("TMDB_API_KEY")
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
 
-# Mapping temporaire des humeurs vers des IDs de genres TMDB (Exemples)
 GENRE_MAP = {
-    "chill": 28,     # Action / Aventure soft
-    "scary": 27,     # Horreur
-    "laugh": 35,     # Comédie
-    "cry": 18,       # Drame
-    "action": 28     # Action
+    "chill":  28,
+    "scary":  27,
+    "laugh":  35,
+    "cry":    18,
+    "action": 28,
 }
 
-# --- MODELES PYDANTIC POUR LE CONTRAT INTERNE ---
-class MovieMinimal(BaseModel):
-    id: int
-    title: str
-    poster_path: Optional[str]
-    release_date: Optional[str]
 
-class MovieDetailed(BaseModel):
-    id: int
-    title: str
-    overview: Optional[str]
-    duration: Optional[int]
-    poster_path: Optional[str]
-    genres: List[str]
-    casting: List[str]
+class ApiConsumerServicer(api_consumer_pb2_grpc.ApiConsumerServiceServicer):
 
-# --- ENDPOINTS ---
+    async def FetchMoviesByGenre(self, request, context):
+        genre_id = GENRE_MAP.get(request.mood.lower())
+        if not genre_id:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"Humeur '{request.mood}' non supportée.")
 
-@app.get("/fetch-movies-by-genre", response_model=List[MovieMinimal])
-async def fetch_movies_by_genre(mood: str):
-    """Appelé par Business Logic pour obtenir des films selon l'humeur"""
-    genre_id = GENRE_MAP.get(mood.lower())
-    if not genre_id:
-        raise HTTPException(status_code=400, detail=f"Humeur '{mood}' non supportée.")
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{TMDB_BASE_URL}/discover/movie", params={
+                "api_key":     TMDB_API_KEY,
+                "with_genres": genre_id,
+                "sort_by":     "popularity.desc",
+                "language":    "fr-FR",
+            })
 
-    async with httpx.AsyncClient() as client:
-        url = f"{TMDB_BASE_URL}/discover/movie"
-        params = {
-            "api_key": TMDB_API_KEY,
-            "with_genres": genre_id,
-            "sort_by": "popularity.desc",
-            "language": "fr-FR"
-        }
-        response = await client.get(url, params=params)
-        
-        if response.status_code != 200:
-            raise HTTPException(status_code=500, detail="Erreur lors de la communication avec TMDB")
-            
-        results = response.json().get("results", [])
-        
-        # Formatage selon la structure attendue
-        movies = []
-        for item in results:
-            movies.append(MovieMinimal(
+        if resp.status_code != 200:
+            await context.abort(grpc.StatusCode.INTERNAL, "Erreur lors de la communication avec TMDB")
+
+        return api_consumer_pb2.MovieList(movies=[
+            api_consumer_pb2.Movie(
                 id=item["id"],
                 title=item["title"],
-                poster_path=item.get("poster_path"),
-                release_date=item.get("release_date")
-            ))
-        return movies
+                poster_path=item.get("poster_path") or "",
+                release_date=item.get("release_date") or "",
+            )
+            for item in resp.json().get("results", [])
+        ])
 
-@app.get("/fetch-catalog", response_model=dict)
-async def fetch_catalog(page: int = 1, limit: int = 20):
-    """Récupère les films populaires pour le catalogue général"""
-    async with httpx.AsyncClient() as client:
-        url = f"{TMDB_BASE_URL}/movie/popular"
-        params = {
-            "api_key": TMDB_API_KEY,
-            "page": page,
-            "language": "fr-FR"
-        }
-        response = await client.get(url, params=params)
-        
-        if response.status_code != 200:
-            raise HTTPException(status_code=500, detail="Impossible de joindre le catalogue distant")
-            
-        json_data = response.json()
-        results = json_data.get("results", [])[:limit] # Gestion de la limite simplifiée
-        
-        movies = [
-            MovieMinimal(
-                id=item["id"],
-                title=item["title"],
-                poster_path=item.get("poster_path"),
-                release_date=item.get("release_date")
-            ) for item in results
-        ]
-        
-        return {
-            "total_results": json_data.get("total_results", 0),
-            "data": movies
-        }
+    async def FetchCatalog(self, request, context):
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{TMDB_BASE_URL}/movie/popular", params={
+                "api_key":  TMDB_API_KEY,
+                "page":     request.page or 1,
+                "language": "fr-FR",
+            })
 
-@app.get("/fetch-movie/{movie_id}", response_model=MovieDetailed)
-async def fetch_movie_details(movie_id: int):
-    """Récupère les détails et les crédits (casting) d'un film"""
-    async with httpx.AsyncClient() as client:
-        # 1. Requête pour les détails
-        detail_url = f"{TMDB_BASE_URL}/movie/{movie_id}"
-        params = {"api_key": TMDB_API_KEY, "language": "fr-FR"}
-        
-        # 2. Requête pour le casting (append_to_response optimise l'appel)
-        params["append_to_response"] = "credits"
-        
-        response = await client.get(detail_url, params=params)
-        
-        if response.status_code == 404:
-            raise HTTPException(status_code=404, detail="Film inconnu sur TMDB")
-        if response.status_code != 200:
-            raise HTTPException(status_code=500, detail="Erreur interne TMDB")
-            
-        data = response.json()
-        
-        # Extraction du casting (Top 5 acteurs)
-        cast_list = data.get("credits", {}).get("cast", [])
-        top_cast = [actor["name"] for actor in cast_list[:5]]
-        
-        # Extraction des noms de genres
-        genres_list = [g["name"] for g in data.get("genres", [])]
+        if resp.status_code != 200:
+            await context.abort(grpc.StatusCode.INTERNAL, "Impossible de joindre le catalogue distant")
 
-        return MovieDetailed(
-            id=data["id"],
-            title=data["title"],
-            overview=data.get("overview"),
-            duration=data.get("runtime"),
-            poster_path=data.get("poster_path"),
-            genres=genres_list,
-            casting=top_cast
+        json_data = resp.json()
+        results   = json_data.get("results", [])[: request.limit or 20]
+        return api_consumer_pb2.CatalogResponse(
+            total_results=json_data.get("total_results", 0),
+            movies=[
+                api_consumer_pb2.Movie(
+                    id=item["id"],
+                    title=item["title"],
+                    poster_path=item.get("poster_path") or "",
+                    release_date=item.get("release_date") or "",
+                )
+                for item in results
+            ],
         )
 
-@app.get("/search-movies", response_model=List[MovieMinimal])
-async def search_movies(query: str):
-    """Recherche textuelle sur TMDB"""
-    async with httpx.AsyncClient() as client:
-        url = f"{TMDB_BASE_URL}/search/movie"
-        params = {
-            "api_key": TMDB_API_KEY,
-            "query": query,
-            "language": "fr-FR"
-        }
-        response = await client.get(url, params=params)
-        
-        if response.status_code != 200:
-            raise HTTPException(status_code=500, detail="Erreur lors de la recherche")
-            
-        results = response.json().get("results", [])
-        return [
-            MovieMinimal(
+    async def FetchMovie(self, request, context):
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(
+                f"{TMDB_BASE_URL}/movie/{request.movie_id}",
+                params={
+                    "api_key":            TMDB_API_KEY,
+                    "language":           "fr-FR",
+                    "append_to_response": "credits",
+                },
+            )
+
+        if resp.status_code == 404:
+            await context.abort(grpc.StatusCode.NOT_FOUND, "Film inconnu sur TMDB")
+        if resp.status_code != 200:
+            await context.abort(grpc.StatusCode.INTERNAL, "Erreur interne TMDB")
+
+        data      = resp.json()
+        cast_list = data.get("credits", {}).get("cast", [])
+        return api_consumer_pb2.MovieDetailed(
+            id=data["id"],
+            title=data["title"],
+            overview=data.get("overview") or "",
+            duration=data.get("runtime") or 0,
+            poster_path=data.get("poster_path") or "",
+            release_date=data.get("release_date") or "",
+            genres=[g["name"] for g in data.get("genres", [])],
+            casting=[actor["name"] for actor in cast_list[:5]],
+        )
+
+    async def SearchMovies(self, request, context):
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"{TMDB_BASE_URL}/search/movie", params={
+                "api_key":  TMDB_API_KEY,
+                "query":    request.query,
+                "language": "fr-FR",
+            })
+
+        if resp.status_code != 200:
+            await context.abort(grpc.StatusCode.INTERNAL, "Erreur lors de la recherche")
+
+        return api_consumer_pb2.MovieList(movies=[
+            api_consumer_pb2.Movie(
                 id=item["id"],
                 title=item["title"],
-                poster_path=item.get("poster_path"),
-                release_date=item.get("release_date")
-            ) for item in results
-        ]
+                poster_path=item.get("poster_path") or "",
+                release_date=item.get("release_date") or "",
+            )
+            for item in resp.json().get("results", [])
+        ])
+
+
+async def serve():
+    server = aio.server()
+    api_consumer_pb2_grpc.add_ApiConsumerServiceServicer_to_server(ApiConsumerServicer(), server)
+    server.add_insecure_port("[::]:50051")
+    await server.start()
+    print("API Consumer gRPC server listening on :50051")
+    await server.wait_for_termination()
+
+
+if __name__ == "__main__":
+    asyncio.run(serve())

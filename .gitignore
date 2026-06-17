@@ -1,0 +1,17 @@
+# Fichiers générés par grpc_tools.protoc au démarrage des conteneurs
+*_pb2.py
+*_pb2_grpc.py
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# SQLite
+*.db

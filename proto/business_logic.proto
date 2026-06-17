@@ -1,0 +1,50 @@
+syntax = "proto3";
+package business_logic;
+
+service BusinessLogicService {
+  rpc Recommend      (RecommendRequest)    returns (MovieList);
+  rpc GetCatalog     (CatalogRequest)      returns (CatalogResponse);
+  rpc GetMovie       (MovieIdRequest)      returns (MovieDetailed);
+  rpc Search         (SearchRequest)       returns (MovieList);
+  rpc RateMovie      (RatingRequest)       returns (OperationResponse);
+  rpc GetWatchlist   (UserRequest)         returns (MovieList);
+  rpc AddToWatchlist (WatchlistAddRequest) returns (OperationResponse);
+}
+
+message RecommendRequest    { string mood     = 1; string group = 2; }
+message CatalogRequest      { int32  page     = 1; int32  limit = 2; }
+message MovieIdRequest      { int32  movie_id = 1; }
+message SearchRequest       { string query    = 1; string genre = 2; }
+message RatingRequest       { int32  movie_id = 1; int32 user_id = 2; float rating = 3; }
+message UserRequest         { int32  user_id  = 1; }
+message WatchlistAddRequest { int32  user_id  = 1; int32 movie_id = 2; }
+
+message Movie {
+  int32  id           = 1;
+  string title        = 2;
+  string poster_path  = 3;
+  string release_date = 4;
+}
+
+message MovieList { repeated Movie movies = 1; }
+
+message CatalogResponse {
+  int32          total_results = 1;
+  repeated Movie movies        = 2;
+}
+
+message MovieDetailed {
+  int32           id           = 1;
+  string          title        = 2;
+  string          overview     = 3;
+  int32           duration     = 4;
+  string          poster_path  = 5;
+  repeated string genres       = 6;
+  repeated string casting      = 7;
+  string          release_date = 8;
+}
+
+message OperationResponse {
+  string status  = 1;
+  string message = 2;
+}

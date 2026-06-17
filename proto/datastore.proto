@@ -1,0 +1,38 @@
+syntax = "proto3";
+package datastore;
+
+service DatastoreService {
+  rpc SaveRating     (RatingRequest)       returns (OperationResponse);
+  rpc GetWatchlist   (UserRequest)         returns (MovieList);
+  rpc AddToWatchlist (WatchlistAddRequest) returns (OperationResponse);
+}
+
+message RatingRequest {
+  int32 movie_id = 1;
+  int32 user_id  = 2;
+  float rating   = 3;
+}
+
+message UserRequest { int32 user_id = 1; }
+
+message WatchlistAddRequest {
+  int32  user_id      = 1;
+  int32  movie_id     = 2;
+  string title        = 3;
+  string poster_path  = 4;
+  string release_date = 5;
+}
+
+message OperationResponse {
+  string status  = 1;
+  string message = 2;
+}
+
+message Movie {
+  int32  id           = 1;
+  string title        = 2;
+  string poster_path  = 3;
+  string release_date = 4;
+}
+
+message MovieList { repeated Movie movies = 1; }
