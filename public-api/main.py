@@ -1,16 +1,22 @@
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
 from typing import Optional
 
 import grpc
 from grpc import aio
-from fastapi import FastAPI, HTTPException, Path, Query
+from fastapi import FastAPI, HTTPException, Path, Query, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from jose import jwt, JWTError
 from pydantic import BaseModel, Field
 
 import business_logic_pb2
 import business_logic_pb2_grpc
 
 BUSINESS_LOGIC_HOST = os.getenv("BUSINESS_LOGIC_HOST", "business-logic:50051")
+JWT_SECRET          = os.getenv("JWT_SECRET", "movienight-dev-secret-change-in-prod")
+JWT_ALGORITHM       = "HS256"
+JWT_EXPIRY_HOURS    = 72
 
 _bl_channel: aio.Channel = None
 _bl_stub:    business_logic_pb2_grpc.BusinessLogicServiceStub = None
@@ -27,18 +33,37 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Movie Night — Public API Gateway", lifespan=lifespan)
 
+_bearer = HTTPBearer()
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+
+def _create_token(user_id: int, username: str) -> str:
+    payload = {
+        "sub":      str(user_id),
+        "username": username,
+        "exp":      datetime.utcnow() + timedelta(hours=JWT_EXPIRY_HOURS),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+) -> dict:
+    try:
+        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        return {"id": int(payload["sub"]), "username": payload["username"]}
+    except (JWTError, KeyError, ValueError):
+        raise HTTPException(status_code=401, detail="Token invalide ou expiré")
+
 
 def _grpc_error_to_http(e: grpc.RpcError) -> HTTPException:
     mapping = {
-        grpc.StatusCode.NOT_FOUND:        404,
-        grpc.StatusCode.INVALID_ARGUMENT: 400,
-        grpc.StatusCode.ALREADY_EXISTS:   409,
-        grpc.StatusCode.UNAVAILABLE:      503,
-        grpc.StatusCode.INTERNAL:         500,
+        grpc.StatusCode.NOT_FOUND:         404,
+        grpc.StatusCode.INVALID_ARGUMENT:  400,
+        grpc.StatusCode.ALREADY_EXISTS:    409,
+        grpc.StatusCode.UNAVAILABLE:       503,
+        grpc.StatusCode.INTERNAL:          500,
+        grpc.StatusCode.UNAUTHENTICATED:   401,
+        grpc.StatusCode.PERMISSION_DENIED: 403,
     }
     return HTTPException(status_code=mapping.get(e.code(), 500), detail=e.details())
 
@@ -51,24 +76,55 @@ def _movie(m) -> dict:
 # Request bodies
 # ---------------------------------------------------------------------------
 
-class RatingBody(BaseModel):
-    user_id: int
-    rating:  float = Field(ge=0.0, le=5.0)
+class RegisterBody(BaseModel):
+    username: str
+    password: str
 
+class LoginBody(BaseModel):
+    username: str
+    password: str
+
+class RatingBody(BaseModel):
+    rating: float = Field(ge=0.0, le=5.0)
 
 class WatchlistBody(BaseModel):
     movie_id: int
 
 
 # ---------------------------------------------------------------------------
-# Endpoints — miroir exact du swagger.yml
+# Auth endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/api/v1/auth/register", status_code=201)
+async def register(body: RegisterBody):
+    try:
+        resp = await _bl_stub.Register(
+            business_logic_pb2.RegisterRequest(username=body.username, password=body.password)
+        )
+        token = _create_token(resp.id, resp.username)
+        return {"token": token, "user": {"id": resp.id, "username": resp.username}}
+    except grpc.RpcError as e:
+        raise _grpc_error_to_http(e)
+
+
+@app.post("/api/v1/auth/login")
+async def login(body: LoginBody):
+    try:
+        resp = await _bl_stub.Login(
+            business_logic_pb2.LoginRequest(username=body.username, password=body.password)
+        )
+        token = _create_token(resp.id, resp.username)
+        return {"token": token, "user": {"id": resp.id, "username": resp.username}}
+    except grpc.RpcError as e:
+        raise _grpc_error_to_http(e)
+
+
+# ---------------------------------------------------------------------------
+# Public endpoints (no auth required)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/v1/recommendation")
-async def recommendation(
-    mood:  str = Query(...),
-    group: str = Query(...),
-):
+async def recommendation(mood: str = Query(...), group: str = Query(...)):
     try:
         resp = await _bl_stub.Recommend(
             business_logic_pb2.RecommendRequest(mood=mood, group=group)
@@ -114,31 +170,44 @@ async def search(query: str = Query(...), genre: Optional[str] = None):
         raise _grpc_error_to_http(e)
 
 
+# ---------------------------------------------------------------------------
+# Protected endpoints (JWT required — user_id taken from token)
+# ---------------------------------------------------------------------------
+
 @app.post("/api/v1/movies/{id}/rate", status_code=201)
-async def rate_movie(id: int = Path(...), body: RatingBody = ...):
+async def rate_movie(
+    id:   int        = Path(...),
+    body: RatingBody = ...,
+    user: dict       = Depends(get_current_user),
+):
     try:
         resp = await _bl_stub.RateMovie(business_logic_pb2.RatingRequest(
-            movie_id=id, user_id=body.user_id, rating=body.rating,
+            movie_id=id, user_id=user["id"], rating=body.rating,
         ))
         return {"status": resp.status, "message": resp.message}
     except grpc.RpcError as e:
         raise _grpc_error_to_http(e)
 
 
-@app.get("/api/v1/user/{user_id}/watchlist")
-async def get_watchlist(user_id: int = Path(...)):
+@app.get("/api/v1/watchlist")
+async def get_watchlist(user: dict = Depends(get_current_user)):
     try:
-        resp = await _bl_stub.GetWatchlist(business_logic_pb2.UserRequest(user_id=user_id))
+        resp = await _bl_stub.GetWatchlist(
+            business_logic_pb2.UserRequest(user_id=user["id"])
+        )
         return [_movie(m) for m in resp.movies]
     except grpc.RpcError as e:
         raise _grpc_error_to_http(e)
 
 
-@app.post("/api/v1/user/{user_id}/watchlist", status_code=201)
-async def add_to_watchlist(user_id: int = Path(...), body: WatchlistBody = ...):
+@app.post("/api/v1/watchlist", status_code=201)
+async def add_to_watchlist(
+    body: WatchlistBody = ...,
+    user: dict          = Depends(get_current_user),
+):
     try:
         resp = await _bl_stub.AddToWatchlist(business_logic_pb2.WatchlistAddRequest(
-            user_id=user_id, movie_id=body.movie_id,
+            user_id=user["id"], movie_id=body.movie_id,
         ))
         return {"status": resp.status, "message": resp.message}
     except grpc.RpcError as e:

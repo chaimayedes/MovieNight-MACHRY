@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
+import { useAuth } from '../AuthContext'
 import MovieCard from '../components/MovieCard'
 import Loader from '../components/Loader'
 
 export default function Watchlist() {
   const [movies,  setMovies]  = useState([])
   const [loading, setLoading] = useState(true)
+  const { user } = useAuth()
 
   useEffect(() => {
     api.watchlist()
@@ -18,7 +20,9 @@ export default function Watchlist() {
     <div>
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-white">Ma Watchlist</h1>
-        <p className="text-gray-500 text-sm mt-1">Films sauvegardés — utilisateur #1</p>
+        {user && (
+          <p className="text-gray-500 text-sm mt-1">{user.username}</p>
+        )}
       </div>
 
       {loading ? (

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import { api } from '../api'
+import { useAuth } from '../AuthContext'
 import Loader from '../components/Loader'
 import StarRating from '../components/StarRating'
 
@@ -9,6 +10,7 @@ const POSTER = 'https://image.tmdb.org/t/p/w500'
 export default function MovieDetail() {
   const { id }     = useParams()
   const navigate   = useNavigate()
+  const { token }  = useAuth()
   const [movie,    setMovie]    = useState(null)
   const [loading,  setLoading]  = useState(true)
   const [rated,    setRated]    = useState(false)
@@ -117,25 +119,34 @@ export default function MovieDetail() {
             </div>
           )}
 
-          <div className="mb-8">
-            <p className="text-xs font-semibold uppercase tracking-widest text-amber-500 mb-3">
-              {rated ? 'Note enregistrée' : 'Note ce film'}
-            </p>
-            <StarRating onRate={handleRate} submitted={rated} />
-          </div>
+          {token ? (
+            <>
+              <div className="mb-8">
+                <p className="text-xs font-semibold uppercase tracking-widest text-amber-500 mb-3">
+                  {rated ? 'Note enregistrée' : 'Note ce film'}
+                </p>
+                <StarRating onRate={handleRate} submitted={rated} />
+              </div>
 
-          <div className="flex items-center gap-4 flex-wrap">
-            <button
-              onClick={handleWatchlist}
-              className="px-6 py-3 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium
-                rounded-xl transition-colors border border-gray-700 hover:border-amber-500/40"
-            >
-              + Ajouter à la watchlist
-            </button>
-            {watchMsg && (
-              <span className="text-amber-500 text-sm">{watchMsg}</span>
-            )}
-          </div>
+              <div className="flex items-center gap-4 flex-wrap">
+                <button
+                  onClick={handleWatchlist}
+                  className="px-6 py-3 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium
+                    rounded-xl transition-colors border border-gray-700 hover:border-amber-500/40"
+                >
+                  + Ajouter à la watchlist
+                </button>
+                {watchMsg && (
+                  <span className="text-amber-500 text-sm">{watchMsg}</span>
+                )}
+              </div>
+            </>
+          ) : (
+            <p className="text-gray-500 text-sm">
+              <Link to="/login" className="text-amber-500 hover:underline">Connecte-toi</Link>
+              {' '}pour noter ce film et l'ajouter à ta watchlist.
+            </p>
+          )}
         </div>
       </div>
     </div>

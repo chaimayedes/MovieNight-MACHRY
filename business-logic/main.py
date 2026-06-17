@@ -2,6 +2,7 @@ import asyncio
 import os
 import grpc
 from grpc import aio
+from passlib.context import CryptContext
 import api_consumer_pb2
 import api_consumer_pb2_grpc
 import datastore_pb2
@@ -28,6 +29,8 @@ GROUP_SELECTION = {
     "family":  (2, 3),
 }
 
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 
 def _pick_top3(movies: list, group: str) -> list:
     start, step = GROUP_SELECTION[group]
@@ -51,6 +54,44 @@ class BusinessLogicServicer(business_logic_pb2_grpc.BusinessLogicServiceServicer
     def __init__(self, ac_stub, ds_stub):
         self.ac = ac_stub   # ApiConsumerServiceStub
         self.ds = ds_stub   # DatastoreServiceStub
+
+    # ------------------------------------------------------------------
+    # AUTH
+    # ------------------------------------------------------------------
+
+    async def Register(self, request, context):
+        if not request.username.strip() or not request.password.strip():
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "Username et password requis")
+
+        hashed = await asyncio.to_thread(pwd_context.hash, request.password)
+
+        try:
+            resp = await self.ds.RegisterUser(datastore_pb2.RegisterUserRequest(
+                username=request.username,
+                hashed_password=hashed,
+            ))
+        except grpc.RpcError as e:
+            if e.code() == grpc.StatusCode.ALREADY_EXISTS:
+                await context.abort(grpc.StatusCode.ALREADY_EXISTS, e.details())
+            await context.abort(grpc.StatusCode.UNAVAILABLE, "Service datastore indisponible")
+
+        return business_logic_pb2.AuthUserResponse(id=resp.id, username=resp.username)
+
+    async def Login(self, request, context):
+        try:
+            user = await self.ds.GetUserByUsername(datastore_pb2.GetUserByUsernameRequest(
+                username=request.username,
+            ))
+        except grpc.RpcError as e:
+            if e.code() == grpc.StatusCode.NOT_FOUND:
+                await context.abort(grpc.StatusCode.UNAUTHENTICATED, "Identifiants incorrects")
+            await context.abort(grpc.StatusCode.UNAVAILABLE, "Service datastore indisponible")
+
+        valid = await asyncio.to_thread(pwd_context.verify, request.password, user.hashed_password)
+        if not valid:
+            await context.abort(grpc.StatusCode.UNAUTHENTICATED, "Identifiants incorrects")
+
+        return business_logic_pb2.AuthUserResponse(id=user.id, username=user.username)
 
     # ------------------------------------------------------------------
     # RECOMMENDATION
@@ -189,7 +230,6 @@ class BusinessLogicServicer(business_logic_pb2_grpc.BusinessLogicServiceServicer
         ])
 
     async def AddToWatchlist(self, request, context):
-        # Enrich with movie metadata from api-consumer before persisting in datastore
         try:
             movie = await self.ac.FetchMovie(api_consumer_pb2.MovieIdRequest(movie_id=request.movie_id))
         except grpc.RpcError as e:

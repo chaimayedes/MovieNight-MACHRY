@@ -11,6 +11,12 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:////data/movie_night.db")
 engine = create_engine(DATABASE_URL, echo=False)
 
 
+class User(SQLModel, table=True):
+    id:              Optional[int] = Field(default=None, primary_key=True)
+    username:        str           = Field(unique=True, index=True)
+    hashed_password: str
+
+
 class Rating(SQLModel, table=True):
     id:       Optional[int] = Field(default=None, primary_key=True)
     movie_id: int
@@ -32,6 +38,38 @@ def _create_tables():
 
 
 class DatastoreServicer(datastore_pb2_grpc.DatastoreServiceServicer):
+
+    async def RegisterUser(self, request, context):
+        def _register():
+            with Session(engine) as session:
+                if session.exec(select(User).where(User.username == request.username)).first():
+                    return None
+                user = User(username=request.username, hashed_password=request.hashed_password)
+                session.add(user)
+                session.commit()
+                session.refresh(user)
+                return user
+
+        user = await asyncio.to_thread(_register)
+        if user is None:
+            await context.abort(grpc.StatusCode.ALREADY_EXISTS, "Ce username est déjà pris")
+
+        return datastore_pb2.UserResponse(
+            id=user.id, username=user.username, hashed_password=user.hashed_password
+        )
+
+    async def GetUserByUsername(self, request, context):
+        def _get():
+            with Session(engine) as session:
+                return session.exec(select(User).where(User.username == request.username)).first()
+
+        user = await asyncio.to_thread(_get)
+        if not user:
+            await context.abort(grpc.StatusCode.NOT_FOUND, "Utilisateur introuvable")
+
+        return datastore_pb2.UserResponse(
+            id=user.id, username=user.username, hashed_password=user.hashed_password
+        )
 
     async def SaveRating(self, request, context):
         if not (0.0 <= request.rating <= 5.0):

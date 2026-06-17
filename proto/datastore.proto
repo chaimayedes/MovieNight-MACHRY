@@ -2,9 +2,11 @@ syntax = "proto3";
 package datastore;
 
 service DatastoreService {
-  rpc SaveRating     (RatingRequest)       returns (OperationResponse);
-  rpc GetWatchlist   (UserRequest)         returns (MovieList);
-  rpc AddToWatchlist (WatchlistAddRequest) returns (OperationResponse);
+  rpc SaveRating          (RatingRequest)              returns (OperationResponse);
+  rpc GetWatchlist        (UserRequest)                returns (MovieList);
+  rpc AddToWatchlist      (WatchlistAddRequest)        returns (OperationResponse);
+  rpc RegisterUser        (RegisterUserRequest)        returns (UserResponse);
+  rpc GetUserByUsername   (GetUserByUsernameRequest)   returns (UserResponse);
 }
 
 message RatingRequest {
@@ -21,6 +23,21 @@ message WatchlistAddRequest {
   string title        = 3;
   string poster_path  = 4;
   string release_date = 5;
+}
+
+message RegisterUserRequest {
+  string username        = 1;
+  string hashed_password = 2;
+}
+
+message GetUserByUsernameRequest {
+  string username = 1;
+}
+
+message UserResponse {
+  int32  id              = 1;
+  string username        = 2;
+  string hashed_password = 3;
 }
 
 message OperationResponse {

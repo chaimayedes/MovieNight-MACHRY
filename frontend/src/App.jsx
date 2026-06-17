@@ -1,14 +1,22 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { AuthProvider, useAuth } from './AuthContext'
 import Navbar from './components/Navbar'
 import Recommend from './pages/Recommend'
 import Catalog from './pages/Catalog'
 import Search from './pages/Search'
 import MovieDetail from './pages/MovieDetail'
 import Watchlist from './pages/Watchlist'
+import Login from './pages/Login'
+import Register from './pages/Register'
 
-export default function App() {
+function ProtectedRoute({ children }) {
+  const { token } = useAuth()
+  return token ? children : <Navigate to="/login" replace />
+}
+
+function AppRoutes() {
   return (
-    <BrowserRouter>
+    <>
       <Navbar />
       <main className="max-w-7xl mx-auto px-6 py-10">
         <Routes>
@@ -16,9 +24,28 @@ export default function App() {
           <Route path="/catalog"    element={<Catalog />} />
           <Route path="/search"     element={<Search />} />
           <Route path="/movies/:id" element={<MovieDetail />} />
-          <Route path="/watchlist"  element={<Watchlist />} />
+          <Route path="/login"      element={<Login />} />
+          <Route path="/register"   element={<Register />} />
+          <Route
+            path="/watchlist"
+            element={
+              <ProtectedRoute>
+                <Watchlist />
+              </ProtectedRoute>
+            }
+          />
         </Routes>
       </main>
+    </>
+  )
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <AppRoutes />
+      </AuthProvider>
     </BrowserRouter>
   )
 }
