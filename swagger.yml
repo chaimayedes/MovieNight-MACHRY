@@ -2,19 +2,159 @@ openapi: 3.0.3
 info:
   title: Movie Night API — Public Gateway
   description: API publique pour l'application de recommandation de films "Movie Night" basée sur l'humeur et le groupe.
-  version: 1.0.0
+  version: 1.1.0
 servers:
   - url: http://localhost:8000
     description: Serveur de développement local (Public API)
 
+security: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+
+    MovieMinimal:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 550
+        title:
+          type: string
+          example: "Fight Club"
+        poster_path:
+          type: string
+          example: "/pB8BM7pdSp6B6Ih7QZ49Yw4v6as.jpg"
+        release_date:
+          type: string
+          example: "1999-10-15"
+
+    MovieDetailed:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 550
+        title:
+          type: string
+          example: "Fight Club"
+        overview:
+          type: string
+          example: "A ticking-time-bomb insomniac and a slippery soap salesman..."
+        duration:
+          type: integer
+          description: Durée en minutes
+          example: 139
+        poster_path:
+          type: string
+          example: "/pB8BM7pdSp6B6Ih7QZ49Yw4v6as.jpg"
+        release_date:
+          type: string
+          example: "1999-10-15"
+        genres:
+          type: array
+          items:
+            type: string
+          example: ["Drama", "Thriller"]
+        casting:
+          type: array
+          items:
+            type: string
+          example: ["Brad Pitt", "Edward Norton", "Helena Bonham Carter"]
+
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: JWT Bearer token (valide 72 h)
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        user:
+          type: object
+          properties:
+            id:
+              type: integer
+              example: 42
+            username:
+              type: string
+              example: "alice"
+
 paths:
+
   # ----------------------------------------------------
-  # ENDPOINT 1 : Recommandation de films
+  # AUTH
+  # ----------------------------------------------------
+  /api/v1/auth/register:
+    post:
+      summary: Créer un compte
+      description: Crée un nouvel utilisateur et retourne un JWT.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  example: "alice"
+                password:
+                  type: string
+                  example: "s3cr3t"
+      responses:
+        '201':
+          description: Compte créé avec succès
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '409':
+          description: Nom d'utilisateur déjà pris
+
+  /api/v1/auth/login:
+    post:
+      summary: Se connecter
+      description: Authentifie l'utilisateur et retourne un JWT.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                  example: "alice"
+                password:
+                  type: string
+                  example: "s3cr3t"
+      responses:
+        '200':
+          description: Connexion réussie
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Identifiants invalides
+
+  # ----------------------------------------------------
+  # RECOMMENDATION
   # ----------------------------------------------------
   /api/v1/recommendation:
     get:
       summary: Obtenir un top 3 de films recommandés
       description: Recommande 3 films triés par pertinence selon l'humeur de l'utilisateur et la composition du groupe.
+      security: []
       parameters:
         - name: mood
           in: query
@@ -45,17 +185,53 @@ paths:
           description: Paramètres manquants ou invalides
 
   # ----------------------------------------------------
-  # ENDPOINT 2 : Détails d'un film
+  # CATALOGUE
+  # ----------------------------------------------------
+  /api/v1/movies:
+    get:
+      summary: Récupérer le catalogue général
+      description: Liste tous les films disponibles avec pagination.
+      security: []
+      parameters:
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Catalogue récupéré avec succès
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_results:
+                    type: integer
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MovieMinimal'
+
+  # ----------------------------------------------------
+  # DÉTAIL D'UN FILM
   # ----------------------------------------------------
   /api/v1/movies/{id}:
     get:
       summary: Récupérer les détails complets d'un film
-      description: Renvoie les informations détaillées d'un film spécifique via son ID (issu de TMDB).
+      security: []
       parameters:
         - name: id
           in: path
           required: true
-          description: L'identifiant unique du film (TMDB ID)
+          description: TMDB ID du film
           schema:
             type: integer
       responses:
@@ -66,20 +242,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/MovieDetailed'
         '404':
-          description: Film introuvable (ID inexistant)
+          description: Film introuvable
 
   # ----------------------------------------------------
-  # ENDPOINT 3 : Noter un film
+  # NOTER UN FILM  (JWT requis)
   # ----------------------------------------------------
   /api/v1/movies/{id}/rate:
     post:
-      summary: Noter un film vu
-      description: Permet à un utilisateur d'attribuer une note à un film. Cette note sera enregistrée dans le Datastore.
+      summary: Noter un film
+      description: |
+        Attribue une note à un film. L'identifiant de l'utilisateur est extrait
+        automatiquement du token JWT — il n'est **pas** à fournir dans le body.
+      security:
+        - bearerAuth: []
       parameters:
         - name: id
           in: path
           required: true
-          description: L'identifiant du film à noter
+          description: TMDB ID du film à noter
           schema:
             type: integer
       requestBody:
@@ -88,18 +268,11 @@ paths:
           application/json:
             schema:
               type: object
-              required:
-                - user_id
-                - rating
+              required: [rating]
               properties:
-                user_id:
-                  type: integer
-                  description: L'ID de l'utilisateur qui note
-                  example: 42
                 rating:
                   type: number
                   format: float
-                  description: La note attribuée (sur 5 étoiles par exemple)
                   minimum: 0
                   maximum: 5
                   example: 4.5
@@ -118,31 +291,31 @@ paths:
                     type: string
                     example: "Rating registered for movie 550"
         '400':
-          description: Données de notation invalides
+          description: Note invalide
+        '401':
+          description: Token manquant ou invalide
 
-    # ----------------------------------------------------
-  # ENDPOINT 4 : Recherche de films
+  # ----------------------------------------------------
+  # RECHERCHE
   # ----------------------------------------------------
   /api/v1/search:
     get:
-      summary: Recherche de films
-      description: Recherche des films par mot-clé et optionnellement par genre.
+      summary: Rechercher des films
+      security: []
       parameters:
         - name: query
           in: query
           required: true
-          description: Le terme de recherche
           schema:
             type: string
         - name: genre
           in: query
           required: false
-          description: Filtrer par genre
           schema:
             type: string
       responses:
         '200':
-          description: Liste des films correspondants
+          description: Résultats de recherche
           content:
             application/json:
               schema:
@@ -151,35 +324,30 @@ paths:
                   $ref: '#/components/schemas/MovieMinimal'
 
   # ----------------------------------------------------
-  # ENDPOINT 5 : Watchlist (Favoris à voir)
+  # WATCHLIST  (JWT requis)
   # ----------------------------------------------------
-  /api/v1/user/{user_id}/watchlist:
+  /api/v1/watchlist:
     get:
       summary: Récupérer la watchlist
-      description: Liste des films que l'utilisateur souhaite voir plus tard.
-      parameters:
-        - name: user_id
-          in: path
-          required: true
-          schema:
-            type: integer
+      description: Retourne la liste des films sauvegardés par l'utilisateur connecté.
+      security:
+        - bearerAuth: []
       responses:
         '200':
-          description: Liste de la watchlist
+          description: Watchlist récupérée
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: '#/components/schemas/MovieMinimal'
+        '401':
+          description: Token manquant ou invalide
     post:
       summary: Ajouter un film à la watchlist
-      parameters:
-        - name: user_id
-          in: path
-          required: true
-          schema:
-            type: integer
+      description: Ajoute un film à la watchlist de l'utilisateur connecté.
+      security:
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -188,98 +356,24 @@ paths:
               type: object
               required: [movie_id]
               properties:
-                movie_id: { type: integer }
+                movie_id:
+                  type: integer
+                  example: 550
       responses:
         '201':
           description: Film ajouté à la watchlist
-
-  # ----------------------------------------------------
-  # ENDPOINT 6 : Catalogue général avec pagination
-  # ----------------------------------------------------
-  /api/v1/movies:
-    get:
-      summary: Récupérer le catalogue général
-      description: "Liste tous les films disponibles avec une pagination pour ne pas surcharger la Gateway."
-      parameters:
-        - name: page
-          in: query
-          required: false
-          description: "Numéro de la page de résultats"
-          schema:
-            type: integer
-            default: 1
-        - name: limit
-          in: query
-          required: false
-          description: "Nombre de films par page"
-          schema:
-            type: integer
-            default: 20
-      responses:
-        '200':
-          description: "Catalogue récupéré avec succès"
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  total_results: { type: integer }
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/MovieMinimal'
-          
-
-# ----------------------------------------------------
-# COMPONENTS : Définition des structures de données
-# ----------------------------------------------------
-components:
-  schemas:
-    
-    # Modèle simplifié pour les listes (Top 3)
-    MovieMinimal:
-      type: object
-      properties:
-        id:
-          type: integer
-          example: 550
-        title:
-          type: string
-          example: "Fight Club"
-        poster_path:
-          type: string
-          example: "/pB8BM7pdSp6B6Ih7QZ49Yw4v6as.jpg"
-        release_date:
-          type: string
-          example: "1999-10-15"
-
-    # Modèle complet pour la page de détail
-    MovieDetailed:
-      type: object
-      properties:
-        id:
-          type: integer
-          example: 550
-        title:
-          type: string
-          example: "Fight Club"
-        overview:
-          type: string
-          example: "A ticking-time-bomb insomniac and a slippery soap salesman channel primal male aggression into a shocking new form of therapy..."
-        duration:
-          type: integer
-          description: Durée en minutes
-          example: 139
-        poster_path:
-          type: string
-          example: "/pB8BM7pdSp6B6Ih7QZ49Yw4v6as.jpg"
-        genres:
-          type: array
-          items:
-            type: string
-          example: ["Drama", "Thriller"]
-        casting:
-          type: array
-          items:
-            type: string
-          example: ["Brad Pitt", "Edward Norton", "Helena Bonham Carter"]
+                  status:
+                    type: string
+                    example: "success"
+                  message:
+                    type: string
+                    example: "Movie added to watchlist"
+        '401':
+          description: Token manquant ou invalide
+        '409':
+          description: Film déjà dans la watchlist
